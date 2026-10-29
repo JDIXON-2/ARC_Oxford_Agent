@@ -62,7 +62,13 @@ while IFS=$'\t' read -r REMOTE LOCAL; do
 done < "$LOCAL_JOB_DIR/results.map"
 rsync -a "$XFER:$REMOTE_JOB_DIR/" "$LOCAL_JOB_DIR/remote/" >> "$LOCAL_JOB_DIR/watch.log" 2>&1 || PULL_OK=0
 
-# Actual usage, for future estimates
+# Actual usage, for future estimates. Re-read job.env and take constraint/QoS from sacct,
+# since a pending job may have been changed with scontrol after the watcher started.
+source "$LOCAL_JOB_DIR/job.env"
+ALLOC=$(ssh -o BatchMode=yes arc-htc "sacct --clusters=htc -j $JOB_ID -X -n -P -o Constraints,QOS --delimiter=@" 2>/dev/null | head -1)
+# Constraints itself contains '|', hence the '@' delimiter
+REQ_CONSTRAINT=${ALLOC%%@*}
+QOS=${ALLOC##*@}
 SACCT=$(ssh -o BatchMode=yes arc-htc "sacct --clusters=htc -j $JOB_ID -n -P -o JobID,Elapsed,MaxRSS,NodeList,ExitCode" 2>/dev/null)
 ELAPSED=$(echo "$SACCT" | awk -F'|' -v j="$JOB_ID" '$1==j {print $2}')
 NODE=$(echo "$SACCT" | awk -F'|' -v j="$JOB_ID" '$1==j {print $4}')
@@ -70,8 +76,8 @@ MAXRSS=$(echo "$SACCT" | awk -F'|' -v j="$JOB_ID.batch" '$1==j {print $3}')
 PEAK_GPU=$(grep -o 'peak_gpu_mem_mib=[0-9?]*' "$LOCAL_JOB_DIR/remote/exit_status" 2>/dev/null | cut -d= -f2)
 GPU_NAME=$(grep -o 'gpu=.* start=' "$LOCAL_JOB_DIR/remote/slurm-$JOB_ID.out" 2>/dev/null | head -1 | sed 's/^gpu=//; s/ start=$//')
 
-printf '{"job_id":"%s","name":"%s","repo":"%s","commit":"%s","state":"%s","partition":"%s","constraint":"%s","req_time":"%s","req_mem":"%s","req_cpus":"%s","req_gpus":"%s","elapsed":"%s","max_rss":"%s","peak_gpu_mem_mib":"%s","gpu":"%s","node":"%s","finished":"%s"}\n' \
-    "$JOB_ID" "$JOB_NAME" "$REPO" "$COMMIT" "$STATE" "$REQ_PARTITION" "$REQ_CONSTRAINT" "$REQ_TIME" "$REQ_MEM" "$REQ_CPUS" "$REQ_GPUS" \
+printf '{"job_id":"%s","name":"%s","repo":"%s","commit":"%s","state":"%s","partition":"%s","constraint":"%s","qos":"%s","req_time":"%s","req_mem":"%s","req_cpus":"%s","req_gpus":"%s","elapsed":"%s","max_rss":"%s","peak_gpu_mem_mib":"%s","gpu":"%s","node":"%s","finished":"%s"}\n' \
+    "$JOB_ID" "$JOB_NAME" "$REPO" "$COMMIT" "$STATE" "$REQ_PARTITION" "$REQ_CONSTRAINT" "${QOS:-}" "$REQ_TIME" "$REQ_MEM" "$REQ_CPUS" "$REQ_GPUS" \
     "$ELAPSED" "$MAXRSS" "${PEAK_GPU:-}" "${GPU_NAME:-}" "$NODE" "$(date -Is)" >> "$LEDGER"
 
 MSG="$STATE after $ELAPSED of $REQ_TIME on ${GPU_NAME:-?}; peak GPU ${PEAK_GPU:-?} MiB, MaxRSS ${MAXRSS:-?} (req $REQ_MEM)"

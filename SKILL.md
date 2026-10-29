@@ -28,7 +28,7 @@ Paths:
 1. Discover the entry point and hyperparameters as `run-experiment` does: CLI flags, configs and overrides, env vars, and hardcoded constants. Do not hardcode a GPU index. On ARC the job only sees the GPU it was given.
 2. **Code closure:** the repo plus every `[tool.uv.sources]` entry with `path = "../<x>"`, checked recursively in each sibling's `pyproject.toml`.
 3. **Data closure:** every input path the run reads that is not tracked by git, such as `data/dataset/...`, cached activations and checkpoints. Use paths relative to the repo root. HF Hub models and datasets do not need copying, because compute nodes download them into `$DATA/hf_cache`.
-4. **Results paths:** where the run writes its outputs, relative to the repo root.
+4. **Results paths:** where the run writes its outputs, relative to the repo root. Read the save code to find them; don't infer them from the run name. If each run writes a timestamped or config-named subdirectory, map the stable parent directory: rsync only copies new files, so this stays cheap.
 5. **Multi-GPU:** request N>1 only if the code really uses N devices (DDP, `device_map` across GPUs).
 6. **Dtype:** check whether the run uses `torch.bfloat16`. This decides whether the cc 7.x GPUs (V100, RTX8000, Titan RTX) can be used.
 
@@ -100,6 +100,8 @@ Use [reference/gpu_specs.md](reference/gpu_specs.md). Do **not** run a local pro
 - **Check group capacity first:** `squeue --clusters=htc -h -q math-lasr -o "%u %T %b %M %l"`. Free slots = 4 − the GPUs held by RUNNING jobs.
   - If enough slots are free, use the QoS.
   - If not, the job would wait until a group job finishes (its remaining time is `%l` − `%M`). Compare that wait with the standard-queue start estimate for the cheaper-GPU constraint, and recommend whichever starts sooner. Show both options in Step 6.
+  - Also count PENDING group jobs with higher priority (`sprio --clusters=htc -j <ids>`). They take freed slots first, so a large one queued ahead can add its whole walltime to the wait. This is normally a quick check, since long jobs holding every group slot are unusual.
+  - QoS can be switched on a pending job: `scontrol update --clusters=htc JobId=<id> QOS=<qos>`.
 - Show the QoS choice, the group's current usage, and the slots this job takes as rows in the Step 6 table. Flag it when the job would take the last free group slot.
 - CPU-only jobs don't use this QoS.
 
